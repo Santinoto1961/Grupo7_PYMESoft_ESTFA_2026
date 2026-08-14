@@ -35,6 +35,7 @@ from tkinter import messagebox
 
 from session import session
 from usuarios import VistaUsuarios
+from stock import VistaStock
 
 
 # ============================================================
@@ -297,7 +298,9 @@ class VentanaPrincipal:
         self._cambiar_vista("FACTURACIÓN", "Módulo de facturación")
 
     def _abrir_stock(self):
-        self._cambiar_vista("STOCK", "Módulo de gestión de inventario")
+        for widget in self.area_contenido.winfo_children():
+            widget.destroy()
+        VistaStock(self.area_contenido)
 
     def _abrir_precios(self):
         self._cambiar_vista("PRECIOS", "Módulo de gestión de precios")
