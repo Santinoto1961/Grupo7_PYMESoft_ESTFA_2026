@@ -1,3 +1,3 @@
-Sprint #3
-GitHub Completo - Viernes 26/06
+Ultimo cambio: 
+Actualización de Dailys 21/08
 ATT: PM (:
