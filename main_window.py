@@ -5,28 +5,20 @@
 main_window.py - Ventana Principal (Menú)
 ============================================================
 Clase `VentanaPrincipal` que implementa la interfaz de la
-ventana principal con sidebar de navegación.
+ventana principal con sidebar de navegación e integración
+de todos los módulos del sistema.
 
-Diseño fiel al mockup adjunto:
-  - Sidebar verde oscuro a la izquierda (~220px)
-  - Logo "PYME soft" en la parte superior del sidebar
-  - Botones de navegación: FACTURACION, STOCK, PRECIOS,
-    CLIENTES, PROVEEDORES, BALANCE, USUARIOS
-  - Enlace "soporte tecnico" y botón "Cerrar Sesion" abajo
-  - Área de contenido gris a la derecha
-
-Paleta de colores (según imagen adjunta):
-  - Verde sidebar:   #1B4D1B
-  - Verde botón:     #a6a6a6
-  - Verde hover:     #FFFFFF
-  - Gris fondo:      #A8A8A8
-  - Blanco texto:    #FFFFFF
-  - Negro texto:     #000000
-  - Rojo cerrar:     #8B0000
-  - Rojo hover:      #A52A2A
+Módulos integrados:
+  - FACTURACION  → facturacion.py
+  - STOCK        → stock.py
+  - PRECIOS      → placeholder
+  - CLIENTES     → clientes.py
+  - PROVEEDORES  → proveedores.py
+  - BALANCE      → placeholder
+  - USUARIOS     → usuarios.py
 
 Autor: Estudiante
-Fecha: 2026-07-02
+Fecha: 2026-08-30
 ============================================================
 """
 
@@ -34,8 +26,11 @@ import tkinter as tk
 from tkinter import messagebox
 
 from session import session
-from usuarios import VistaUsuarios
+from clientes import VistaClientes
+from proveedores import VistaProveedores
 from stock import VistaStock
+from facturacion import VistaFacturacion
+from usuarios import VistaUsuarios
 
 
 # ============================================================
@@ -67,11 +62,10 @@ class VentanaPrincipal:
             self.root.state("zoomed")
         except Exception:
             self.root.attributes("-zoomed", True)
-
         self.root.resizable(True, True)
 
         # ============================================================
-        # FRAME CONTENEDOR PRINCIPAL (ocupa toda la ventana)
+        # FRAME CONTENEDOR PRINCIPAL
         # ============================================================
         self.frame_contenedor = tk.Frame(self.root, bg=COLOR_GRIS_FONDO)
         self.frame_contenedor.pack(fill=tk.BOTH, expand=True)
@@ -85,21 +79,12 @@ class VentanaPrincipal:
             width=220
         )
         self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        self.sidebar.pack_propagate(False)  # Fijar ancho
+        self.sidebar.pack_propagate(False)
 
-        # ── Logo / Título en el sidebar ─────────────────────────
         self._crear_logo_sidebar()
-
-        # ── Botones de navegación ───────────────────────────────
         self._crear_botones_navegacion()
-
-        # ── Separador flexible ──────────────────────────────────
         tk.Frame(self.sidebar, bg=COLOR_VERDE_SIDEBAR, height=20).pack()
-
-        # ── Enlace "soporte tecnico" ────────────────────────────
         self._crear_soporte_tecnico()
-
-        # ── Botón "Cerrar Sesion" ───────────────────────────────
         self._crear_boton_cerrar_sesion()
 
         # ============================================================
@@ -111,7 +96,6 @@ class VentanaPrincipal:
         )
         self.area_contenido.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # ── Título de bienvenida ────────────────────────────────
         self._mostrar_bienvenida()
 
     # ============================================================
@@ -119,13 +103,9 @@ class VentanaPrincipal:
     # ============================================================
 
     def _crear_logo_sidebar(self):
-        """
-        Crea el logo/título "PYME soft" en la parte superior del sidebar.
-        """
         frame_logo = tk.Frame(self.sidebar, bg=COLOR_VERDE_SIDEBAR, pady=25)
         frame_logo.pack(fill=tk.X)
 
-        # Canvas para el logo con la rana (o texto si no hay imagen)
         self.canvas_logo = tk.Canvas(
             frame_logo,
             width=180,
@@ -135,12 +115,10 @@ class VentanaPrincipal:
         )
         self.canvas_logo.pack()
 
-        # Intentar cargar imagen del logo
         try:
             self.img_logo = tk.PhotoImage(file="assets/logo_sidebar.png")
             self.canvas_logo.create_image(90, 40, image=self.img_logo)
         except Exception:
-            # Dibujar texto "PYME soft" como fallback
             self.canvas_logo.create_text(
                 90, 30,
                 text="PYME",
@@ -157,11 +135,6 @@ class VentanaPrincipal:
             )
 
     def _crear_botones_navegacion(self):
-        """
-        Crea los botones del menú lateral según el rol del usuario.
-        Admin ve todos. Empleado ve solo los permitidos.
-        """
-        # Todos los botones disponibles
         botones_todos = [
             {"texto": "FACTURACION", "comando": self._abrir_facturacion},
             {"texto": "STOCK",       "comando": self._abrir_stock},
@@ -172,10 +145,8 @@ class VentanaPrincipal:
             {"texto": "USUARIOS",    "comando": self._abrir_usuarios},
         ]
 
-        # Botones que el empleado PUEDE ver
         botones_empleado = ["FACTURACION", "STOCK", "PRECIOS", "CLIENTES", "PROVEEDORES", "BALANCE"]
 
-        # Filtrar según rol
         if session.is_admin():
             botones_a_mostrar = botones_todos
         else:
@@ -184,7 +155,6 @@ class VentanaPrincipal:
             ]
 
         self.botones_menu = []
-
         for boton_data in botones_a_mostrar:
             btn = tk.Button(
                 self.sidebar,
@@ -203,14 +173,10 @@ class VentanaPrincipal:
             btn.pack(fill=tk.X, padx=15, pady=8)
             self.botones_menu.append(btn)
 
-            # Efecto hover
             btn.bind("<Enter>", lambda e, b=btn: b.config(bg=COLOR_VERDE_HOVER))
             btn.bind("<Leave>", lambda e, b=btn: b.config(bg=COLOR_VERDE_BOTON))
 
     def _crear_soporte_tecnico(self):
-        """
-        Crea el enlace de texto "soporte tecnico" en la parte inferior.
-        """
         frame_soporte = tk.Frame(self.sidebar, bg=COLOR_VERDE_SIDEBAR, pady=10)
         frame_soporte.pack(fill=tk.X, side=tk.BOTTOM)
 
@@ -226,9 +192,6 @@ class VentanaPrincipal:
         self.lbl_soporte.bind("<Button-1>", lambda e: self._abrir_soporte())
 
     def _crear_boton_cerrar_sesion(self):
-        """
-        Crea el botón rojo "Cerrar Sesion" al final del sidebar.
-        """
         frame_cerrar = tk.Frame(self.sidebar, bg=COLOR_VERDE_SIDEBAR, pady=15, padx=15)
         frame_cerrar.pack(fill=tk.X, side=tk.BOTTOM)
 
@@ -248,21 +211,16 @@ class VentanaPrincipal:
         )
         self.btn_cerrar.pack(fill=tk.X)
 
-        # Efecto hover
         self.btn_cerrar.bind("<Enter>", lambda e: self.btn_cerrar.config(bg=COLOR_ROJO_HOVER))
         self.btn_cerrar.bind("<Leave>", lambda e: self.btn_cerrar.config(bg=COLOR_ROJO_CERRAR))
 
     def _mostrar_bienvenida(self):
-        """
-        Muestra un mensaje de bienvenida en el área de contenido.
-        """
         for widget in self.area_contenido.winfo_children():
             widget.destroy()
 
         frame_bienvenida = tk.Frame(self.area_contenido, bg=COLOR_GRIS_FONDO)
         frame_bienvenida.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Nombre del usuario
         nombre = session.nombre or session.usuario or "Usuario"
         rol_texto = "Administrador" if session.is_admin() else "Empleado"
 
@@ -291,11 +249,13 @@ class VentanaPrincipal:
         ).pack(pady=(20, 0))
 
     # ============================================================
-    # COMANDOS DE LOS BOTONES DEL MENÚ
+    # NAVEGACIÓN A MÓDULOS
     # ============================================================
 
     def _abrir_facturacion(self):
-        self._cambiar_vista("FACTURACIÓN", "Módulo de facturación")
+        for widget in self.area_contenido.winfo_children():
+            widget.destroy()
+        VistaFacturacion(self.area_contenido)
 
     def _abrir_stock(self):
         for widget in self.area_contenido.winfo_children():
@@ -306,23 +266,21 @@ class VentanaPrincipal:
         self._cambiar_vista("PRECIOS", "Módulo de gestión de precios")
 
     def _abrir_clientes(self):
-        self._cambiar_vista("CLIENTES", "Módulo de gestión de clientes")
+        for widget in self.area_contenido.winfo_children():
+            widget.destroy()
+        VistaClientes(self.area_contenido)
 
     def _abrir_proveedores(self):
-        self._cambiar_vista("PROVEEDORES", "Módulo de gestión de proveedores")
+        for widget in self.area_contenido.winfo_children():
+            widget.destroy()
+        VistaProveedores(self.area_contenido)
 
     def _abrir_balance(self):
         self._cambiar_vista("BALANCE", "Módulo de balances y reportes")
 
     def _abrir_usuarios(self):
-        """
-        Abre la pantalla de gestión de usuarios (solo admin).
-        """
-        # Limpiar área de contenido
         for widget in self.area_contenido.winfo_children():
             widget.destroy()
-
-        # Instanciar la vista de usuarios
         VistaUsuarios(self.area_contenido)
 
     def _abrir_soporte(self):
@@ -334,9 +292,6 @@ class VentanaPrincipal:
         )
 
     def _cambiar_vista(self, titulo, subtitulo):
-        """
-        Cambia el contenido del área principal mostrando el título del módulo.
-        """
         for widget in self.area_contenido.winfo_children():
             widget.destroy()
 
@@ -372,24 +327,15 @@ class VentanaPrincipal:
     # ============================================================
 
     def _cerrar_sesion(self):
-        """
-        Cierra la sesión actual, limpia el estado global y vuelve al login.
-        """
         respuesta = messagebox.askyesno(
             "Cerrar Sesión",
             "¿Está seguro de que desea cerrar la sesión?"
         )
         if respuesta:
-            # Limpiar sesión global
             session.cerrar_sesion()
-
-            # Destruir ventana principal
             self.root.destroy()
 
-            # Importación LOCAL (lazy) para evitar circular import
             from login import VentanaLogin
-
-            # Volver a abrir login
             ventana_login = tk.Tk()
             app = VentanaLogin(ventana_login)
             ventana_login.mainloop()
