@@ -1,8 +1,8 @@
-# PYMEsoft — Sistema de Gestión Comercial para PyMEs
+# PYMEsoft — Sistema de Gestión Comercial Integral para PyMEs
 
-**PYMEsoft** es una aplicación de escritorio orientada a la gestión comercial integral de pequeñas y medianas empresas. Permite centralizar en un único sistema el proceso de facturación, control de stock e inventario, administración de clientes y proveedores, y el seguimiento del balance financiero del negocio.
+**PYMEsoft** es una aplicación de escritorio orientada a la gestión comercial integral de pequeñas y medianas empresas. Permite centralizar en un único sistema el proceso de facturación, control de stock e inventario, administración de clientes y proveedores, y el seguimiento del balance financiero del comercio.
 
-Desarrollado originalmente tomando como cliente de referencia al *Vivero Los Tilos*, el proyecto fue diseñado de manera modular y genérica para adaptarse a la operatoria cotidiana de cualquier PyME comercial.
+Desarrollado originalmente tomando como ambiente y modelo de negocio al *Vivero Los Tilos*, el proyecto fue diseñado de manera modular y genérica para adaptarse a la operatoria cotidiana de cualquier PyME comercial.
 
 ---
 
@@ -21,7 +21,7 @@ El objetivo principal de PYMEsoft es resolver los problemas habituales que enfre
 
 ## 🛠️ Lenguajes y Tecnologías
 
-* **Frontend:** React (Interfaz visual para aplicación de escritorio)
+* **Frontend:** TKInter (Interfaz visual para aplicación de escritorio)
 * **Backend:** Python (Lógica de negocio, controladores y servicios API)
 * **Base de Datos:** MySQL (Persistencia y modelo relacional de datos)
 
@@ -30,6 +30,10 @@ El objetivo principal de PYMEsoft es resolver los problemas habituales que enfre
 ## 👥 Integrantes del Grupo
 
 * **Grupo 7 — ESTFA 2026**
+**Santiago Casquero** - Project Manager
+**Santino Cinti** - Developer
+**Dante Amarelle** - DataBase Analyst
+**Ciro Vrdoljak** - UX/UI & Tester
 
 ---
 
