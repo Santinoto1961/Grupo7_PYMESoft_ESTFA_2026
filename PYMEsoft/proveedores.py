@@ -12,6 +12,7 @@ Fecha: 2026-08-30
 ============================================================
 """
 
+import traceback
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
@@ -50,11 +51,19 @@ class VistaProveedores:
         for widget in self.parent.winfo_children():
             widget.destroy()
 
-        crear_tablas_compras()
-
         self._crear_titulo()
         self._crear_panel_principal()
-        self._crear_botones_accion()
+
+        try:
+            self._crear_botones_accion()
+        except Exception:
+            messagebox.showerror("Error en botones", traceback.format_exc())
+
+        try:
+            crear_tablas_compras()
+        except Exception:
+            messagebox.showerror("Error de base de datos", traceback.format_exc())
+
         self._cargar_proveedores()
 
     # ============================================================
@@ -279,22 +288,6 @@ class VistaProveedores:
 
         tk.Frame(self.frame_fila_botones, bg=COLOR_GRIS_FONDO).pack(side=tk.LEFT, expand=True)
 
-        self.btn_ver_productos = tk.Button(
-            self.frame_fila_botones,
-            text="Ver Productos Provistos",
-            font=("Arial", 11, "bold"),
-            bg=COLOR_VERDE_BOTON_ACCION,
-            fg=COLOR_BLANCO,
-            activebackground="#1a5c1a",
-            activeforeground=COLOR_BLANCO,
-            relief="flat",
-            bd=0,
-            cursor="hand2",
-            width=22,
-            height=2,
-            command=self._ver_productos_provistos
-        )
-        self.btn_ver_productos.pack(side=tk.LEFT, padx=(0, 10))
 
         self.btn_historial = tk.Button(
             self.frame_fila_botones,
@@ -319,8 +312,6 @@ class VistaProveedores:
         self.btn_agregar.bind("<Leave>", lambda e: self.btn_agregar.config(bg=COLOR_VERDE_BOTON))
         self.btn_eliminar.bind("<Enter>", lambda e: self.btn_eliminar.config(bg=COLOR_ROJO_HOVER))
         self.btn_eliminar.bind("<Leave>", lambda e: self.btn_eliminar.config(bg=COLOR_ROJO_CERRAR))
-        self.btn_ver_productos.bind("<Enter>", lambda e: self.btn_ver_productos.config(bg="#1a5c1a"))
-        self.btn_ver_productos.bind("<Leave>", lambda e: self.btn_ver_productos.config(bg=COLOR_VERDE_BOTON_ACCION))
         self.btn_historial.bind("<Enter>", lambda e: self.btn_historial.config(bg="#1a5c1a"))
         self.btn_historial.bind("<Leave>", lambda e: self.btn_historial.config(bg=COLOR_VERDE_BOTON_ACCION))
 
@@ -491,7 +482,11 @@ class VistaProveedores:
             self.tree.delete(item)
 
         consulta = "SELECT id, nombre, telefono, direccion FROM proveedores ORDER BY id"
-        resultado = query(consulta)
+        try:
+            resultado = query(consulta)
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudieron cargar los proveedores.\nError: {e}")
+            return
 
         if resultado:
             for fila in resultado:

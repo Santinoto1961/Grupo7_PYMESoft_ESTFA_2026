@@ -32,6 +32,30 @@ COLOR_ROJO_HOVER         = "#A52A2A"
 COLOR_VERDE_BOTON_ACCION = "#0D2E0D"
 COLOR_FONDO_INTERNO      = "#f5f5f5"
 
+# ============================================================
+# BORRADOR DE FACTURA
+# ============================================================
+# Vive a nivel de módulo (no dentro de la vista) para sobrevivir cuando
+# main_window destruye y recrea VistaFacturacion al cambiar de pantalla.
+_borrador = {"id_usuario": None, "items": [], "cliente": None}
+
+
+def _parsear_precio(texto):
+    """Acepta '1500', '1500.50', '1500,50' y '1.500,50'. ValueError si no es número."""
+    s = texto.strip().replace("$", "").replace(" ", "")
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        s = s.replace(",", ".")
+    return float(s)
+
+
+def limpiar_borrador():
+    """Descarta el borrador de factura (al cerrar sesión o terminar la venta)."""
+    _borrador["id_usuario"] = None
+    _borrador["items"] = []
+    _borrador["cliente"] = None
+
 
 class VistaFacturacion:
     def __init__(self, parent_frame):
@@ -46,6 +70,7 @@ class VistaFacturacion:
         self._cargar_productos_disponibles()
         self._crear_titulo()
         self._crear_notebook()
+        self._restaurar_borrador()
 
     def _cargar_clientes(self):
         self.clientes_dict = {0: "Consumidor Final"}
@@ -56,7 +81,7 @@ class VistaFacturacion:
 
     def _cargar_productos_disponibles(self):
         self.productos_disponibles = []
-        res = query("SELECT id, nombre, descripcion, precio_venta, stock FROM productos WHERE stock > 0 ORDER BY nombre")
+        res = query("SELECT id, nombre, descripcion, precio_venta, stock FROM productos ORDER BY nombre")
         if res:
             self.productos_disponibles = res
 
@@ -93,6 +118,7 @@ class VistaFacturacion:
         )
         self.combo_cliente.grid(row=0, column=1, sticky="w", padx=(0, 30))
         self.combo_cliente.current(0)
+        self.combo_cliente.bind("<<ComboboxSelected>>", lambda e: self._guardar_borrador())
 
         tk.Label(frame_info, text="Fecha:", font=("Arial", 11, "bold"),
             fg=COLOR_BLANCO, bg=COLOR_VERDE_SIDEBAR).grid(row=0, column=2, sticky="w", padx=(0, 10))
@@ -143,6 +169,9 @@ class VistaFacturacion:
         scroll_prod.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.tree_prod.bind("<Double-1>", self._on_doble_clic_producto)
+        # Productos agotados (rojo) y sin precio de venta (amarillo)
+        self.tree_prod.tag_configure("sin_stock", background="#f3c6c6")
+        self.tree_prod.tag_configure("sin_precio", background="#f6e7b4")
 
         # Derecha: Items de factura
         frame_factura = tk.Frame(frame_medio, bg=COLOR_FONDO_INTERNO, padx=8, pady=8)
@@ -240,7 +269,16 @@ class VistaFacturacion:
         for prod in self.productos_disponibles:
             id_p, nombre, desc, precio_venta, stock = prod
             if filtro.lower() in nombre.lower():
-                self.tree_prod.insert("", tk.END, values=(id_p, nombre, f"${precio_venta:.2f}", stock))
+                stock = stock or 0
+                precio_venta = precio_venta or 0.0
+                if stock <= 0:
+                    tag = ("sin_stock",)
+                elif precio_venta <= 0:
+                    tag = ("sin_precio",)
+                else:
+                    tag = ()
+                self.tree_prod.insert("", tk.END, tags=tag,
+                                      values=(id_p, nombre, f"${precio_venta:.2f}", stock))
 
     def _on_focus_buscar_prod(self, event):
         if self.entry_buscar.get() == "buscar producto por nombre...":
@@ -288,6 +326,22 @@ class VistaFacturacion:
             messagebox.showwarning("Sin stock", f"El producto '{nombre}' no tiene stock disponible.")
             return
 
+        if precio_venta <= 0:
+            opcion = self._dialogo_sin_precio(nombre)
+            if opcion == "cancelar":
+                return
+            if opcion == "cambiar":
+                nuevo_precio = self._pedir_cambio_precio(id_prod, nombre)
+                if nuevo_precio is None:
+                    return
+                precio_venta = nuevo_precio
+                # Refrescar la lista para que muestre el precio nuevo
+                self._cargar_productos_disponibles()
+                filtro = self.entry_buscar.get()
+                if filtro == "buscar producto por nombre...":
+                    filtro = ""
+                self._cargar_tree_productos(filtro)
+
         self.items_factura.append({
             "id": id_prod,
             "nombre": nombre,
@@ -296,6 +350,162 @@ class VistaFacturacion:
             "stock": stock
         })
         self._actualizar_tree_factura()
+
+    # ------------------------------------------------------------
+    # Producto sin precio: cambio rápido con clave de administrador
+    # ------------------------------------------------------------
+    def _centrar_dialogo(self, v):
+        v.update_idletasks()
+        root = self.parent.winfo_toplevel()
+        w, h = v.winfo_reqwidth(), v.winfo_reqheight()
+        x = root.winfo_rootx() + (root.winfo_width() - w) // 2
+        y = root.winfo_rooty() + (root.winfo_height() - h) // 2
+        v.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
+
+    def _boton_dialogo(self, parent, texto, comando, bg, fg, hover, ancho=16):
+        btn = tk.Button(
+            parent, text=texto, font=("Arial", 11, "bold"), bg=bg, fg=fg,
+            activebackground=hover, activeforeground=fg, relief="flat", bd=0,
+            cursor="hand2", width=ancho, height=2, command=comando
+        )
+        btn.bind("<Enter>", lambda e: btn.config(bg=hover))
+        btn.bind("<Leave>", lambda e: btn.config(bg=bg))
+        return btn
+
+    def _dialogo_sin_precio(self, nombre):
+        """Cartel de producto sin precio. Devuelve 'cambiar', 'igual' o 'cancelar'."""
+        resultado = {"op": "cancelar"}
+
+        v = tk.Toplevel(self.parent)
+        v.title("Producto sin precio de venta")
+        v.configure(bg=COLOR_FONDO_INTERNO)
+        v.resizable(False, False)
+        v.transient(self.parent.winfo_toplevel())
+
+        def elegir(op):
+            resultado["op"] = op
+            v.destroy()
+
+        tk.Label(v, text="⚠ Producto sin precio", font=("Arial", 16, "bold"),
+                 fg=COLOR_ROJO_CERRAR, bg=COLOR_FONDO_INTERNO).pack(pady=(20, 6), padx=30)
+        tk.Label(v, text=f"'{nombre}' tiene precio de venta $0.00.\n"
+                         "Si lo agrega igual, se facturará sin costo.",
+                 font=("Arial", 11), fg=COLOR_NEGRO, bg=COLOR_FONDO_INTERNO,
+                 justify=tk.CENTER).pack(padx=30, pady=(0, 16))
+
+        fila = tk.Frame(v, bg=COLOR_FONDO_INTERNO)
+        fila.pack(padx=20, pady=(0, 18))
+        self._boton_dialogo(fila, "Cambiar precio", lambda: elegir("cambiar"),
+                            COLOR_VERDE_BOTON_ACCION, COLOR_BLANCO, "#1a5c1a").pack(side=tk.LEFT, padx=4)
+        self._boton_dialogo(fila, "Agregar igual", lambda: elegir("igual"),
+                            COLOR_VERDE_BOTON, COLOR_NEGRO, COLOR_VERDE_HOVER).pack(side=tk.LEFT, padx=4)
+        self._boton_dialogo(fila, "Cancelar", lambda: elegir("cancelar"),
+                            COLOR_ROJO_CERRAR, COLOR_BLANCO, COLOR_ROJO_HOVER).pack(side=tk.LEFT, padx=4)
+
+        v.protocol("WM_DELETE_WINDOW", lambda: elegir("cancelar"))
+        self._centrar_dialogo(v)
+        v.grab_set()
+        self.parent.wait_window(v)
+        return resultado["op"]
+
+    def _verificar_clave_admin(self, clave):
+        """True si la clave corresponde a un usuario administrador."""
+        if not clave:
+            return False
+        res = query(
+            "SELECT id FROM usuarios WHERE rol = 'administrador' AND contraseña = ?",
+            (clave,)
+        )
+        return bool(res)
+
+    def _pedir_cambio_precio(self, id_prod, nombre):
+        """
+        Pide el precio nuevo y la clave del administrador (si quien está
+        logueado es empleado) y actualiza productos.precio_venta.
+        Devuelve el precio nuevo, o None si se canceló.
+        """
+        resultado = {"precio": None}
+        intentos = {"n": 0}
+        es_admin = session.is_admin()
+
+        v = tk.Toplevel(self.parent)
+        v.title("Cambiar precio de venta")
+        v.configure(bg=COLOR_FONDO_INTERNO)
+        v.resizable(False, False)
+        v.transient(self.parent.winfo_toplevel())
+
+        tk.Label(v, text="Cambiar precio", font=("Arial", 16, "bold"),
+                 fg=COLOR_VERDE_SIDEBAR, bg=COLOR_FONDO_INTERNO).pack(pady=(18, 2), padx=30)
+        tk.Label(v, text=nombre, font=("Arial", 11, "italic"), fg="#555555",
+                 bg=COLOR_FONDO_INTERNO, wraplength=320).pack(padx=30, pady=(0, 6))
+
+        form = tk.Frame(v, bg=COLOR_FONDO_INTERNO, padx=30)
+        form.pack(fill=tk.X)
+
+        def campo(etiqueta, show=""):
+            tk.Label(form, text=etiqueta, font=("Arial", 11), fg=COLOR_NEGRO,
+                     bg=COLOR_FONDO_INTERNO, anchor="w").pack(fill=tk.X, pady=(10, 2))
+            e = tk.Entry(form, font=("Arial", 12), bg=COLOR_BLANCO, fg=COLOR_NEGRO,
+                         relief="flat", bd=0, highlightthickness=1,
+                         highlightbackground="#888888", highlightcolor=COLOR_VERDE_SIDEBAR,
+                         show=show, width=28)
+            e.pack(fill=tk.X, ipady=6)
+            return e
+
+        e_precio = campo("Nuevo precio de venta ($):")
+        e_clave = None
+        if not es_admin:
+            e_clave = campo("Contraseña del administrador:", show="*")
+
+        def confirmar(event=None):
+            try:
+                nuevo = _parsear_precio(e_precio.get())
+            except ValueError:
+                messagebox.showwarning("Precio inválido", "Ingrese un precio numérico.", parent=v)
+                e_precio.focus()
+                return
+            if nuevo <= 0:
+                messagebox.showwarning("Precio inválido", "El precio debe ser mayor a 0.", parent=v)
+                e_precio.focus()
+                return
+
+            if not es_admin and not self._verificar_clave_admin(e_clave.get()):
+                intentos["n"] += 1
+                if intentos["n"] >= 3:
+                    messagebox.showerror("Acceso denegado",
+                                         "Demasiados intentos fallidos.", parent=v)
+                    v.destroy()
+                    return
+                messagebox.showerror(
+                    "Contraseña incorrecta",
+                    f"Contraseña de administrador incorrecta. "
+                    f"Intentos restantes: {3 - intentos['n']}", parent=v)
+                e_clave.delete(0, tk.END)
+                e_clave.focus()
+                return
+
+            try:
+                query("UPDATE productos SET precio_venta = ? WHERE id = ?", (nuevo, id_prod))
+            except Exception as ex:
+                messagebox.showerror("Error", f"No se pudo guardar el precio.\n{ex}", parent=v)
+                return
+            resultado["precio"] = nuevo
+            v.destroy()
+
+        fila = tk.Frame(v, bg=COLOR_FONDO_INTERNO)
+        fila.pack(pady=(20, 18))
+        self._boton_dialogo(fila, "Guardar", confirmar, COLOR_VERDE_BOTON_ACCION,
+                            COLOR_BLANCO, "#1a5c1a", ancho=14).pack(side=tk.LEFT, padx=4)
+        self._boton_dialogo(fila, "Cancelar", v.destroy, COLOR_ROJO_CERRAR,
+                            COLOR_BLANCO, COLOR_ROJO_HOVER, ancho=14).pack(side=tk.LEFT, padx=4)
+
+        v.bind("<Return>", confirmar)
+        v.bind("<Escape>", lambda e: v.destroy())
+        self._centrar_dialogo(v)
+        v.grab_set()
+        e_precio.focus()
+        self.parent.wait_window(v)
+        return resultado["precio"]
 
     def _actualizar_tree_factura(self):
         for item in self.tree_factura.get_children():
@@ -313,6 +523,61 @@ class VistaFacturacion:
             ))
 
         self.lbl_total.config(text=f"TOTAL: ${self.total:.2f}")
+        self._guardar_borrador()
+
+    # ------------------------------------------------------------
+    # Borrador: se guarda en cada cambio y se recupera al volver
+    # ------------------------------------------------------------
+    def _guardar_borrador(self):
+        _borrador["id_usuario"] = session.id_usuario
+        _borrador["items"] = [dict(i) for i in self.items_factura]
+        _borrador["cliente"] = self.combo_cliente.get()
+
+    def _restaurar_borrador(self):
+        """
+        Recupera la factura en curso. Revalida contra la base: si mientras
+        tanto se cargó un precio, cambió el stock o se eliminó un producto,
+        el borrador se ajusta y se avisa.
+        """
+        if _borrador["id_usuario"] != session.id_usuario:
+            limpiar_borrador()
+            return
+
+        if _borrador["cliente"] in self.combo_cliente.cget("values"):
+            self.combo_cliente.set(_borrador["cliente"])
+
+        if not _borrador["items"]:
+            return
+
+        avisos = []
+        for it in _borrador["items"]:
+            res = query("SELECT nombre, precio_venta, stock FROM productos WHERE id = ?", (it["id"],))
+            if not res:
+                avisos.append(f"• '{it['nombre']}' ya no existe: se quitó.")
+                continue
+            nombre, precio, stock = res[0]
+            precio = float(precio or 0.0)
+            stock = int(stock or 0)
+            if stock < 1:
+                avisos.append(f"• '{nombre}' se quedó sin stock: se quitó.")
+                continue
+            cantidad = it["cantidad"]
+            if cantidad > stock:
+                cantidad = stock
+                avisos.append(f"• '{nombre}': cantidad ajustada a {stock} (stock disponible).")
+            if abs(precio - it["precio"]) > 0.005:
+                avisos.append(f"• '{nombre}': precio actualizado de ${it['precio']:.2f} a ${precio:.2f}.")
+            self.items_factura.append({
+                "id": it["id"], "nombre": nombre, "precio": precio,
+                "cantidad": cantidad, "stock": stock,
+            })
+
+        self._actualizar_tree_factura()
+
+        texto = f"📝 Se recuperó tu factura en curso ({len(self.items_factura)} item(s))."
+        if avisos:
+            texto += "\n\nCambios desde que saliste de la pantalla:\n" + "\n".join(avisos)
+        self.parent.after(150, lambda: messagebox.showinfo("Borrador de factura", texto))
 
     def _on_doble_clic_item_factura(self, event):
         seleccion = self.tree_factura.selection()
@@ -402,6 +667,17 @@ class VistaFacturacion:
                 disponible = res[0][0] if res else 0
                 messagebox.showerror("Stock insuficiente",
                     f"No hay suficiente stock de '{item['nombre']}'. Disponible: {disponible}")
+                return
+
+        sin_precio = [i["nombre"] for i in self.items_factura if i["precio"] <= 0]
+        if sin_precio:
+            if not messagebox.askyesno(
+                "Items sin precio de venta",
+                "⚠ Estos productos tienen precio $0.00 y se facturarán gratis:\n\n"
+                + "\n".join(f"• {n}" for n in sin_precio)
+                + "\n\n¿Desea finalizar la venta igual?",
+                icon="warning", default="no"
+            ):
                 return
 
         respuesta = messagebox.askyesno("Confirmar venta",
@@ -546,9 +822,9 @@ class VistaFacturacion:
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         consulta = """
-            SELECT p.nombre, d.cantidad, d.precio_unitario
+            SELECT COALESCE(p.nombre, '(producto eliminado)'), d.cantidad, d.precio_unitario
             FROM detalle_ventas d
-            JOIN productos p ON d.id_producto = p.id
+            LEFT JOIN productos p ON d.id_producto = p.id
             WHERE d.id_venta = ?
         """
         res = query(consulta, (id_venta,))

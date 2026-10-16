@@ -38,6 +38,7 @@ except ImportError:
     openpyxl = None
 
 from database import query
+from session import session
 from compras import (
     crear_tablas_compras, registrar_compra, calcular_monto_compra,
     existe_compra_similar,
@@ -304,45 +305,81 @@ def _procesar_excel(ruta_archivo):
     return productos, None
 
 
+def _mapa_productos_proveedor(id_proveedor):
+    """
+    Devuelve {nombre_normalizado: (id, nombre, stock)} con los productos que
+    ya existen para ese proveedor. La comparación ignora mayúsculas, tildes
+    y espacios repetidos.
+    """
+    filas = query(
+        "SELECT id, nombre, stock FROM productos WHERE id_proveedor = ? ORDER BY id",
+        (id_proveedor,)
+    ) or []
+    mapa = {}
+    for pid, nombre, stock in filas:
+        mapa.setdefault(_normalizar_texto(nombre), (pid, nombre, stock or 0))
+    return mapa
+
+
+def _detectar_existentes(productos, id_proveedor):
+    """
+    Productos del Excel que YA existen en la base para ese proveedor.
+    Retorna lista de dicts: id, nombre, stock_actual, cantidad_nueva
+    (cantidad_nueva suma las filas repetidas del Excel).
+    """
+    mapa = _mapa_productos_proveedor(id_proveedor)
+    cantidades = {}
+    for p in productos:
+        clave = _normalizar_texto(p["nombre"])
+        if clave in mapa:
+            cantidades[clave] = cantidades.get(clave, 0) + int(p["cantidad"])
+
+    existentes = []
+    for clave, cant in cantidades.items():
+        pid, nombre, stock = mapa[clave]
+        existentes.append({
+            "id": pid, "nombre": nombre,
+            "stock_actual": stock, "cantidad_nueva": cant,
+        })
+    existentes.sort(key=lambda e: e["nombre"].lower())
+    return existentes
+
+
 def _guardar_productos_en_bd(productos, id_proveedor):
     """
-    Guarda o actualiza los productos en la base de datos, asociados al
-    proveedor elegido por el usuario (id_proveedor = PK real de la tabla
-    proveedores). No se usa ningún código del Excel para identificar al
-    proveedor: el único identificador válido es id_proveedor.
-    REGLA ESTRICTA: el precio_venta existente NUNCA se sobrescribe.
+    Guarda los productos del Excel asociados al proveedor elegido
+    (id_proveedor = PK real de la tabla proveedores).
+
+    REGLAS:
+      * Producto existente (mismo nombre y proveedor): la cantidad del Excel
+        se SUMA al stock actual (no lo reemplaza). El precio de compra se
+        actualiza al último (si el Excel trae 0 se conserva el anterior).
+      * Producto nuevo: se inserta con precio_venta = 0.0.
+      * El precio_venta existente NUNCA se sobrescribe.
     Retorna: (cantidad_insertados, cantidad_actualizados)
     """
     insertados = 0
     actualizados = 0
+    mapa = _mapa_productos_proveedor(id_proveedor)
 
     for prod in productos:
         nombre = prod["nombre"]
-        cantidad = prod["cantidad"]
+        cantidad = int(prod["cantidad"])
         precio_compra = prod["precio_compra"]
+        clave = _normalizar_texto(nombre)
 
-        # Buscar coincidencia por nombre dentro de los productos del MISMO proveedor
-        existente = query(
-            "SELECT id, precio_venta FROM productos WHERE nombre = ? AND id_proveedor = ?",
-            (nombre, id_proveedor)
-        )
-
-        if existente and len(existente) > 0:
-            # Actualizar: NO tocar precio_venta
-            prod_id = existente[0][0]
+        if clave in mapa:
+            prod_id = mapa[clave][0]
             prod["id_producto"] = prod_id   # para el detalle de la compra
             query(
                 """UPDATE productos SET
-                    nombre = ?,
-                    stock = ?,
-                    precio_costo = ?,
-                    id_proveedor = ?
+                    stock = COALESCE(stock, 0) + ?,
+                    precio_costo = CASE WHEN ? > 0 THEN ? ELSE precio_costo END
                    WHERE id = ?""",
-                (nombre, cantidad, precio_compra, id_proveedor, prod_id)
+                (cantidad, precio_compra, precio_compra, prod_id)
             )
             actualizados += 1
         else:
-            # Insertar nuevo: precio_venta = 0.0
             query(
                 """INSERT INTO productos
                     (nombre, descripcion, stock, precio_costo, precio_venta, categoria, id_proveedor)
@@ -352,7 +389,11 @@ def _guardar_productos_en_bd(productos, id_proveedor):
             nuevo = query(
                 "SELECT id FROM productos WHERE nombre = ? AND id_proveedor = ? "
                 "ORDER BY id DESC LIMIT 1", (nombre, id_proveedor))
-            prod["id_producto"] = nuevo[0][0] if nuevo else None
+            prod_id = nuevo[0][0] if nuevo else None
+            prod["id_producto"] = prod_id
+            if prod_id is not None:
+                # Si el Excel repite el producto, la 2.ª fila se suma a esta
+                mapa[clave] = (prod_id, nombre, cantidad)
             insertados += 1
 
     return insertados, actualizados
@@ -730,6 +771,16 @@ class VistaStock(tk.Frame):
         else:
             self._set_det("margen", "—")
 
+    def _solo_admin(self, accion):
+        """Barrera de seguridad: True si es administrador; si no, avisa."""
+        if session.is_admin():
+            return True
+        messagebox.showwarning(
+            "Acceso denegado",
+            f"Solo el administrador puede {accion}."
+        )
+        return False
+
     def _on_seleccionar_producto(self, event):
         seleccion = self.tree.selection()
         if not seleccion:
@@ -767,6 +818,15 @@ class VistaStock(tk.Frame):
 
         fila = tk.Frame(self.frame_botones, bg=COLOR_GRIS_FONDO)
         fila.pack(fill=tk.X)
+
+        # El empleado solo consulta: no ve los botones de alta/edición/baja/importación
+        if not session.is_admin():
+            tk.Label(
+                fila,
+                text="🔒 Solo el administrador puede agregar, editar, eliminar o importar productos.",
+                font=("Arial", 10, "italic"), fg=COLOR_NEGRO, bg=COLOR_GRIS_FONDO
+            ).pack(side=tk.LEFT, pady=8)
+            return
 
         self._boton(
             fila, "Editar producto", self._editar_producto,
@@ -922,6 +982,8 @@ class VistaStock(tk.Frame):
 
     def _importar_excel(self):
         """Punto de entrada: primero elige el proveedor, luego el archivo."""
+        if not self._solo_admin("importar productos"):
+            return
         if pd is None:
             messagebox.showerror(
                 "Librería faltante",
@@ -1032,15 +1094,39 @@ class VistaStock(tk.Frame):
                 "mismo archivo y el mismo monto. ¿Es una importación duplicada?\n"
             )
 
-        if not messagebox.askyesno(
-            "Confirmar importación",
-            f"Se detectaron {len(productos)} productos válidos.\n"
-            f"Monto total de la compra: ${monto_compra:,.2f}\n"
-            f"{aviso_dup}\n"
-            f"¿Desea importarlos a la base de datos?\n\n"
-            f"Los productos existentes se actualizarán (cantidad y precio de compra).\n"
-            f"El precio de venta existente NO se modificará."
-        ):
+        existentes = _detectar_existentes(productos, id_proveedor)
+
+        if existentes:
+            lineas = [
+                f"• {e['nombre']}: {e['stock_actual']} actual + {e['cantidad_nueva']} "
+                f"= {e['stock_actual'] + e['cantidad_nueva']}"
+                for e in existentes[:12]
+            ]
+            if len(existentes) > 12:
+                lineas.append(f"... y {len(existentes) - 12} más")
+            continuar = messagebox.askyesno(
+                "Productos existentes",
+                f"⚠ {len(existentes)} de {len(productos)} productos ya existen en el stock "
+                f"de este proveedor.\n\n"
+                f"Si continúa, la cantidad del Excel se SUMARÁ a la cantidad actual "
+                f"(no la reemplaza):\n\n"
+                + "\n".join(lineas) + "\n\n"
+                f"Monto total de la compra: ${monto_compra:,.2f}\n"
+                f"{aviso_dup}\n"
+                f"El precio de venta existente NO se modificará.\n\n"
+                f"¿Desea continuar con la importación?",
+                icon="warning"
+            )
+        else:
+            continuar = messagebox.askyesno(
+                "Confirmar importación",
+                f"Se detectaron {len(productos)} productos válidos (todos nuevos).\n"
+                f"Monto total de la compra: ${monto_compra:,.2f}\n"
+                f"{aviso_dup}\n"
+                f"¿Desea importarlos a la base de datos?\n\n"
+                f"El precio de venta se cargará en 0: defínalo luego en Stock."
+            )
+        if not continuar:
             return
 
         try:
@@ -1052,7 +1138,7 @@ class VistaStock(tk.Frame):
                 f"✓ Importación completada.\n\n"
                 f"Compra registrada por: ${monto_registrado:,.2f}\n"
                 f"Productos nuevos: {insertados}\n"
-                f"Productos actualizados: {actualizados}\n"
+                f"Productos existentes (cantidad sumada): {actualizados}\n"
                 f"Total procesados: {insertados + actualizados}"
             )
             self._cargar_filtro_proveedores()
@@ -1065,6 +1151,8 @@ class VistaStock(tk.Frame):
     # ============================================================
 
     def _agregar_producto_manual(self):
+        if not self._solo_admin("agregar productos"):
+            return
         v = self._crear_dialogo("Nuevo producto", "Los campos con * son obligatorios.")
         form = tk.Frame(v, bg=COLOR_FONDO_INTERNO, padx=28)
         form.pack(fill=tk.X, pady=(4, 0))
@@ -1105,7 +1193,23 @@ class VistaStock(tk.Frame):
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (nombre, "", cantidad, pcompra, pventa, "", id_prov)
                 )
-                messagebox.showinfo("Éxito", f"Producto '{nombre}' agregado correctamente.", parent=v)
+                # Gasto de proveedor: el alta con cantidad y costo se registra como compra
+                compra_txt = ""
+                if cantidad > 0 and pcompra > 0:
+                    nuevo = query(
+                        "SELECT id FROM productos WHERE nombre = ? ORDER BY id DESC LIMIT 1",
+                        (nombre,))
+                    prod = {
+                        "nombre": nombre, "cantidad": cantidad,
+                        "precio_compra": pcompra,
+                        "id_producto": nuevo[0][0] if nuevo else None,
+                    }
+                    _, monto = registrar_compra(id_prov, "Alta manual", [prod])
+                    compra_txt = f"\nCompra registrada en el Balance: ${monto:,.2f}"
+                messagebox.showinfo(
+                    "Éxito",
+                    f"Producto '{nombre}' agregado correctamente.{compra_txt}",
+                    parent=v)
                 v.destroy()
                 self._refrescar()
             except Exception as e:
@@ -1124,6 +1228,8 @@ class VistaStock(tk.Frame):
 
     def _editar_producto(self):
         """Edita nombre y precio de venta (el resto solo vía Excel)."""
+        if not self._solo_admin("modificar productos"):
+            return
         if self.producto_seleccionado is None:
             messagebox.showwarning("Sin selección", "Seleccione un producto de la tabla para editar.")
             return
@@ -1174,11 +1280,28 @@ class VistaStock(tk.Frame):
     # ============================================================
 
     def _borrar_producto(self):
+        if not self._solo_admin("eliminar productos"):
+            return
         if self.producto_seleccionado is None:
             messagebox.showwarning("Sin selección", "Seleccione un producto de la tabla para borrar.")
             return
         fila = self._filas_por_id.get(self.producto_seleccionado)
         nombre_prod = fila[1] if fila else f"ID {self.producto_seleccionado}"
+
+        # Un producto con ventas NO se borra: perdería su historial.
+        # Si se agotó, simplemente queda con stock 0.
+        hist = query(
+            "SELECT COUNT(*) FROM detalle_ventas WHERE id_producto = ?",
+            (self.producto_seleccionado,))
+        if hist and hist[0][0] > 0:
+            messagebox.showwarning(
+                "No se puede eliminar",
+                f"'{nombre_prod}' tiene {hist[0][0]} venta(s) registrada(s).\n\n"
+                "Eliminarlo borraría el detalle de esas ventas.\n"
+                "Si ya no lo vende, déjelo con stock 0: no se pierde y "
+                "puede volver a cargarse con una nueva importación."
+            )
+            return
 
         if not messagebox.askyesno(
             "Confirmar eliminación",

@@ -29,7 +29,7 @@ from session import session
 from clientes import VistaClientes
 from proveedores import VistaProveedores
 from stock import VistaStock
-from facturacion import VistaFacturacion
+from facturacion import VistaFacturacion, limpiar_borrador
 from usuarios import VistaUsuarios
 from balance import VistaBalance
 
@@ -331,6 +331,7 @@ class VentanaPrincipal:
             "¿Está seguro de que desea cerrar la sesión?"
         )
         if respuesta:
+            limpiar_borrador()
             session.cerrar_sesion()
             self.root.destroy()
 

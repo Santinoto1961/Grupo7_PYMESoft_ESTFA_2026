@@ -327,7 +327,7 @@ class VistaUsuarios:
         tk.Label(frame_form, text="Rol:", font=("Arial", 11), fg=COLOR_NEGRO, bg=COLOR_FONDO_INTERNO, anchor="w").pack(fill=tk.X, pady=(10, 2))
         self.combo_rol = ttk.Combobox(
             frame_form,
-            values=["admin", "empleado"],
+            values=["administrador", "empleado"],
             font=("Arial", 12),
             state="readonly",
             height=2
@@ -448,7 +448,7 @@ class VistaUsuarios:
         tk.Label(frame_form, text="Rol:", font=("Arial", 11), fg=COLOR_NEGRO, bg=COLOR_FONDO_INTERNO, anchor="w").pack(fill=tk.X, pady=(10, 2))
         self.combo_edit_rol = ttk.Combobox(
             frame_form,
-            values=["admin", "empleado"],
+            values=["administrador", "empleado"],
             font=("Arial", 12),
             state="readonly",
             height=2
